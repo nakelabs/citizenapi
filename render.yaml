@@ -1,0 +1,24 @@
+services:
+  # Web Service running FastAPI with Uvicorn
+  - type: web
+    name: citizen-incident-api
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: citizen-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+
+# PostgreSQL Managed Database on Render
+databases:
+  - name: citizen-db
+    databaseName: citizen_incident_db
+    user: citizen_user
+    plan: free
+
