@@ -13,11 +13,7 @@ from database import get_db
 from models import User
 
 SECRET_KEY = os.getenv("SECRET_KEY", "citizen-incident-reporting-super-secure-key-2026")
-TOKEN_EXPIRE_SECONDS = 60 * 60 * 24 * 30  # 30 days
-
-# ==========================================
-# Password Hashing (PBKDF2-SHA256 - NIST approved)
-# ==========================================
+TOKEN_EXPIRE_SECONDS = 60 * 60 * 24 * 30
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
@@ -27,7 +23,6 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if ":" not in hashed_password:
-        # Fallback in case raw string was stored
         return plain_password == hashed_password
     try:
         salt_hex, key_hex = hashed_password.split(":", 1)
@@ -38,11 +33,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         return False
 
-
-# ==========================================
-# Pure Python RFC-7519 JWT Implementation
-# (Zero external C-dependency failure risk on Render)
-# ==========================================
 
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
@@ -67,8 +57,7 @@ def create_access_token(user_id: int, username: str) -> str:
     encoded_payload = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signing_input = f"{encoded_header}.{encoded_payload}".encode("utf-8")
     signature = hmac.new(SECRET_KEY.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    encoded_signature = _b64url_encode(signature)
-    return f"{encoded_header}.{encoded_payload}.{encoded_signature}"
+    return f"{encoded_header}.{encoded_payload}.{_b64url_encode(signature)}"
 
 
 def decode_access_token(token: str) -> Optional[dict]:
@@ -90,15 +79,10 @@ def decode_access_token(token: str) -> Optional[dict]:
         return None
 
 
-# ==========================================
-# FastAPI Dependency Helpers
-# ==========================================
-
 def get_current_user_optional(
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ) -> Optional[User]:
-    """Extracts user from Bearer token if provided. Returns None if unauthenticated."""
     if not authorization:
         return None
     scheme, _, token = authorization.partition(" ")
@@ -119,7 +103,6 @@ def get_current_user_optional(
 def get_current_user(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ) -> User:
-    """Requires authentication. Raises 401 if token is absent or invalid."""
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -127,4 +110,3 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return current_user
-

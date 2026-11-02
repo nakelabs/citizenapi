@@ -10,7 +10,6 @@ class User(Base):
     password = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), default=func.now())
 
-    # Relationship to user's reported incidents
     incidents = relationship("Incident", back_populates="author", cascade="all, delete-orphan")
 
 
@@ -19,19 +18,16 @@ class Incident(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
-    category = Column(String(50), index=True, nullable=False)  # Accident, Fighting, Rioting, Robbery, Other
+    category = Column(String(50), index=True, nullable=False)
     description = Column(Text, nullable=False)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
-    photo_base64 = Column(Text, nullable=True)  # Base64 data URI (e.g. data:image/jpeg;base64,...)
+    photo_base64 = Column(Text, nullable=True)
     author_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), default=func.now(), index=True)
 
-    # Relationship to User author
     author = relationship("User", back_populates="incidents")
 
     @property
     def author_username(self) -> str:
-        """Returns the username of the incident author, or 'Anonymous' if submitted as guest."""
         return self.author.username if self.author else "Anonymous"
-

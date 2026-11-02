@@ -22,19 +22,10 @@ from auth import (
     get_current_user_optional,
 )
 
-# ==========================================
-# Database Seeding & Startup Lifecycle
-# ==========================================
-
 def seed_database():
-    """Seeds realistic Nigerian community reports if database is empty."""
     db = SessionLocal()
     try:
-        count = db.query(Incident).count()
-        if count == 0:
-            print("[SEED] Incidents table is empty. Seeding realistic sample incidents...")
-
-            # Create or get a default community reporter user
+        if db.query(Incident).count() == 0:
             seed_user = db.query(User).filter(User.username == "LagosWatch").first()
             if not seed_user:
                 seed_user = User(
@@ -86,11 +77,7 @@ def seed_database():
 
             db.add_all(sample_incidents)
             db.commit()
-            print(f"[SEED] Successfully seeded {len(sample_incidents)} sample incidents!")
-        else:
-            print(f"[SEED] Database already contains {count} incidents. Skipping seeding.")
     except Exception as e:
-        print(f"[SEED ERROR] Error while checking or seeding database: {e}")
         db.rollback()
     finally:
         db.close()
@@ -98,27 +85,17 @@ def seed_database():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Auto-create tables in Render PostgreSQL and run seed
-    print("[STARTUP] Connecting to database and creating tables if not present...")
     Base.metadata.create_all(bind=engine)
     seed_database()
     yield
-    # Shutdown logic (if any)
-    print("[SHUTDOWN] FastAPI application shutting down.")
 
-
-# ==========================================
-# FastAPI Application Initialization
-# ==========================================
 
 app = FastAPI(
     title="Citizens Incident Reporting API",
-    description="Production REST API powering the Citizen Incident Reporting Mobile App on Render.com",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# Configure CORS: Allow all origins, methods, and headers for Cordova/Webview clients
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -127,10 +104,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ==========================================
-# Health / Root Endpoints
-# ==========================================
 
 @app.get("/", tags=["Health"])
 def root():
@@ -148,18 +121,13 @@ def root():
     }
 
 
-# ==========================================
-# Authentication Endpoints (/auth)
-# ==========================================
-
 @app.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED, tags=["Auth"])
 def register(credentials: UserAuth, db: Session = Depends(get_db)):
-    """Registers a new citizen user account."""
     existing_user = db.query(User).filter(User.username == credentials.username).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered. Please choose another username or log in."
+            detail="Username already registered"
         )
 
     new_user = User(
@@ -176,15 +144,9 @@ def register(credentials: UserAuth, db: Session = Depends(get_db)):
 
 @app.post("/auth/login", response_model=AuthResponse, tags=["Auth"])
 def login(credentials: UserAuth, db: Session = Depends(get_db)):
-    """
-    Validates user credentials.
-    To streamline assessment testing for the examiner:
-    If the user does not exist, automatically register and log them in seamlessly.
-    """
     user = db.query(User).filter(User.username == credentials.username).first()
 
     if not user:
-        # Seamless examiner auto-registration
         user = User(
             username=credentials.username,
             password=hash_password(credentials.password)
@@ -193,7 +155,6 @@ def login(credentials: UserAuth, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
     else:
-        # Validate existing user credentials
         if not verify_password(credentials.password, user.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -207,7 +168,6 @@ def login(credentials: UserAuth, db: Session = Depends(get_db)):
 
 @app.get("/auth/me", response_model=UserMeResponse, tags=["Auth"])
 def get_auth_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Returns profile information and total count of reports submitted by the authenticated user."""
     reports_count = db.query(Incident).filter(Incident.author_id == current_user.id).count()
     return UserMeResponse(
         id=current_user.id,
@@ -217,26 +177,16 @@ def get_auth_me(current_user: User = Depends(get_current_user), db: Session = De
     )
 
 
-# ==========================================
-# Incidents Endpoints (/incidents)
-# ==========================================
-
 @app.get("/incidents", response_model=List[IncidentResponse], tags=["Incidents"])
 def get_incidents(
-    category: Optional[str] = Query("All", description="Category filter (e.g. Accident, Fighting, Rioting, Robbery, Other, or All)"),
+    category: Optional[str] = Query("All"),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieves all incident reports sorted chronologically (newest first).
-    Supports optional category filtering.
-    """
     query = db.query(Incident)
-
     if category and category.strip().lower() != "all":
         query = query.filter(func.lower(Incident.category) == category.strip().lower())
 
-    incidents = query.order_by(Incident.created_at.desc()).all()
-    return incidents
+    return query.order_by(Incident.created_at.desc()).all()
 
 
 @app.get("/incidents/me", response_model=List[IncidentResponse], tags=["Incidents"])
@@ -244,17 +194,12 @@ def get_my_incidents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieves all incident reports submitted specifically by the authenticated user,
-    sorted chronologically (newest first).
-    """
-    incidents = (
+    return (
         db.query(Incident)
         .filter(Incident.author_id == current_user.id)
         .order_by(Incident.created_at.desc())
         .all()
     )
-    return incidents
 
 
 @app.post("/incidents", response_model=IncidentResponse, status_code=status.HTTP_201_CREATED, tags=["Incidents"])
@@ -263,14 +208,6 @@ def create_incident(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
-    """
-    Submits a new incident report with GPS coordinates and optional photo evidence.
-    Inspects Authorization: Bearer <token> header:
-    - If valid token provided, links incident to author_id.
-    - If omitted or guest, records report anonymously with author_id = None.
-    """
-    author_id = current_user.id if current_user else None
-
     new_incident = Incident(
         title=incident_data.title,
         category=incident_data.category,
@@ -278,11 +215,10 @@ def create_incident(
         latitude=incident_data.latitude,
         longitude=incident_data.longitude,
         photo_base64=incident_data.photo_base64,
-        author_id=author_id
+        author_id=current_user.id if current_user else None
     )
 
     db.add(new_incident)
     db.commit()
     db.refresh(new_incident)
     return new_incident
-
